@@ -1,0 +1,7 @@
+{
+  "supported_languages": {
+    "en": "English",
+    "zh": "Mandarin Chinese (中文)"
+  },
+  "default": "en"
+}

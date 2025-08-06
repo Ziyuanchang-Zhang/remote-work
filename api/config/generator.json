@@ -1,0 +1,60 @@
+{
+  "default_provider": "openai",
+  "providers": {
+    "google": {
+      "default_model": "gemini-2.0-flash",
+      "supportsCustomModel": true,
+      "models": {
+        "gemini-2.0-flash": {
+          "temperature": 0.7,
+          "top_p": 0.8,
+          "top_k": 20
+        },
+        "gemini-2.5-flash-preview-05-20": {
+          "temperature": 0.7,
+          "top_p": 0.8,
+          "top_k": 20
+        },
+        "gemini-2.5-pro-preview-03-25": {
+          "temperature": 0.7,
+          "top_p": 0.8,
+          "top_k": 20
+        }
+      }
+    },
+    "openai": {
+      "default_model": "Qwen3-235B-A22B-Thinking-2507-FP8",
+      "supportsCustomModel": true,
+      "models": {
+        "Qwen3-235B-A22B-Thinking-2507-FP8":{
+          "temperature": 0.7,
+          "top_p": 0.8
+        },
+        "DeepSeek-V3-0324": {
+          "temperature": 0.7,
+          "top_p": 0.8
+        }
+      }
+    },
+    "openrouter": {
+      "default_model": "openai/gpt-4o",
+      "supportsCustomModel": true,
+      "models": {
+      }
+    },
+    "ollama": {
+      "default_model": "ollama.rnd.huawei.com/library/qwen3:32b",
+      "supportsCustomModel": true,
+      "models": {
+        "ollama.rnd.huawei.com/library/qwen3:32b": {
+          "options": {
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "num_ctx": 32000
+          }
+        }
+      }
+    }
+  }
+}
+

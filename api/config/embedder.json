@@ -1,0 +1,16 @@
+{
+  "embedder": {
+    "client_class": "OllamaClient",
+    "model_kwargs": {
+      "model": "ollama.rnd.huawei.com/library/bge-m3"
+    }
+  },
+  "retriever": {
+    "top_k": 20
+  },
+  "text_splitter": {
+    "split_by": "word",
+    "chunk_size": 500,
+    "chunk_overlap": 100
+  }
+}
