@@ -377,9 +377,16 @@ class MultiLanguageTextSplitter:
         item_ranges = []
         
         # 定义不同语言的目标节点类型
+        # target_node_types = {
+        #     'c': ['function_definition'],
+        #     'cpp': ['function_definition', 'method_definition'],
+        #     'python': ['function_definition', 'class_definition']
+        # }
+
+        # 定义不同语言的目标节点类型（新增函数声明节点）
         target_node_types = {
-            'c': ['function_definition'],
-            'cpp': ['function_definition', 'method_definition'],
+            'c': ['function_definition', 'declaration'],  # 新增 declaration 识别C函数声明
+            'cpp': ['function_definition', 'method_definition', 'declaration'],  # 新增C++声明
             'python': ['function_definition', 'class_definition']
         }
         
@@ -403,39 +410,101 @@ class MultiLanguageTextSplitter:
         traverse(root_node)
         return items, item_ranges
 
-    def _extract_item_data(self, node, lines, code, language, parent_class=None):
-        """提取单个项目（函数/类）的数据"""
-        # 获取名称
-        name_node = self._find_identifier(node)
-        if not name_node:
+    def _find_function_name_in_declarator(self, declarator_node):
+        """从function_declarator节点中精准提取函数名（忽略返回值中的标识符）"""
+        # 递归遍历，但优先处理函数名所在的路径
+        def traverse(n):
+            # 函数名的identifier通常直接属于function_declarator或其直接子节点
+            if n.type == "identifier":
+                # 检查父节点是否为function_declarator或指针声明（排除结构体名）
+                parent_type = n.parent.type if n.parent else ""
+                if parent_type in ["function_declarator", "pointer_declarator", "array_declarator"]:
+                    return n
+            
+            # 优先遍历可能包含函数名的子节点（跳过返回值类型相关节点）
+            for child in n.children:
+                # 忽略返回值中的结构体类型节点（如struct_specifier）
+                if child.type in ["struct_specifier", "union_specifier", "enum_specifier"]:
+                    continue
+                result = traverse(child)
+                if result:
+                    return result
             return None
         
-        item_name = self._extract_code_by_position(lines, name_node.start_point, name_node.end_point).strip()
-        item_text = self._extract_code_by_position(lines, node.start_point, node.end_point)
-        
-        # 获取注释
-        comments, start_line = self._get_comments_above_with_tree_sitter(code, node.start_point[0], language)
-        end_line = node.end_point[0] + 1
-        
-        # 获取函数调用
-        called_funcs = self._get_called_functions_unified(node, lines, language)
-        
-        # 确定项目类型和完整名称
-        item_type = "class" if node.type == "class_definition" else "function"
-        full_name = f"{parent_class}.{item_name}" if parent_class else item_name
-        
-        return {
-            "name": full_name,
-            "original_name": item_name,
-            "start_line": start_line,
-            "end_line": end_line,
-            "comments": comments,
-            "code": item_text.strip(),
-            "calls": called_funcs,
-            "type": item_type,
-            "parent_class": parent_class
-        }
+        return traverse(declarator_node)
 
+    def _extract_item_data(self, node, lines, code, language, parent_class=None):
+        """提取单个项目（函数/类/函数声明）的数据"""
+        # 1. 处理函数声明（针对头文件中的 declaration 节点）
+        if node.type == "declaration" and language in ['c', 'cpp']:
+            # 从声明节点中查找函数名（简化逻辑，可根据实际语法调整）
+            func_declarator = None
+            for child in node.children:
+                if child.type == "function_declarator":
+                    func_declarator = child
+                    break
+            if not func_declarator:
+                return None
+            
+            # 提取函数名
+            # name_node = self._find_identifier(func_declarator)
+            name_node = self._find_function_name_in_declarator(func_declarator)  # 新增专用方法
+            if not name_node:
+                return None
+            item_name = self._extract_code_by_position(lines, name_node.start_point, name_node.end_point).strip()
+            
+            # 提取声明的位置信息
+            start_line = node.start_point[0] + 1
+            end_line = node.end_point[0] + 1
+            
+            return {
+                "name": item_name,
+                "original_name": item_name,
+                "start_line": start_line,
+                "end_line": end_line,
+                "comments": "",  # 声明可能没有注释，可按需提取
+                "code": self._extract_code_by_position(lines, node.start_point, node.end_point).strip(),
+                "calls": [],  # 声明没有函数体，无调用
+                "type": "function_declaration",  # 标记为声明
+                "parent_class": parent_class
+            }
+        
+        # 2. 原有处理函数定义和类的逻辑（保持不变）
+        if node.type in ["function_definition", "method_definition", "class_definition"]:
+            # （此处省略原有代码，保持不变）
+            # ...
+            """提取单个项目（函数/类）的数据"""
+            # 获取名称
+            name_node = self._find_identifier(node)
+            if not name_node:
+                return None
+            
+            item_name = self._extract_code_by_position(lines, name_node.start_point, name_node.end_point).strip()
+            item_text = self._extract_code_by_position(lines, node.start_point, node.end_point)
+            
+            # 获取注释
+            comments, start_line = self._get_comments_above_with_tree_sitter(code, node.start_point[0], language)
+            end_line = node.end_point[0] + 1
+            
+            # 获取函数调用
+            called_funcs = self._get_called_functions_unified(node, lines, language)
+            
+            # 确定项目类型和完整名称
+            item_type = "class" if node.type == "class_definition" else "function"
+            full_name = f"{parent_class}.{item_name}" if parent_class else item_name
+            
+            return {
+                "name": full_name,
+                "original_name": item_name,
+                "start_line": start_line,
+                "end_line": end_line,
+                "comments": comments,
+                "code": item_text.strip(),
+                "calls": called_funcs,
+                "type": item_type,
+                "parent_class": parent_class
+            }
+    
     def build_language_chunks(self, code: str, original_meta: Dict[str, Any], language: str) -> List[Document]:
         """构建特定语言文件的分块"""
         lines = code.splitlines(keepends=True)

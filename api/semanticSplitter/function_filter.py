@@ -128,6 +128,19 @@ class FunctionFilterProcessor(MultiLanguageTextSplitter):
 
         # 收集当前文件的所有函数详情（仅处理C/C++/Python）
         if language in ['c', 'cpp', 'python']:
+            # current_functions = [
+            #     {
+            #         'name': chunk.meta_data.get('function_name'),
+            #         'original_name': chunk.meta_data.get('original_name'),
+            #         'type': chunk.meta_data.get('chunk_type'),
+            #         'start_line': chunk.meta_data.get('start_line'),
+            #         'end_line': chunk.meta_data.get('end_line'),
+            #         'parent_class': chunk.meta_data.get('parent_class'),
+            #         'calls': chunk.meta_data.get('calls', [])
+            #     }
+            #     for chunk in chunks 
+            #     if chunk.meta_data.get('chunk_type') in ['function', 'class']
+            # ]
             current_functions = [
                 {
                     'name': chunk.meta_data.get('function_name'),
@@ -139,8 +152,9 @@ class FunctionFilterProcessor(MultiLanguageTextSplitter):
                     'calls': chunk.meta_data.get('calls', [])
                 }
                 for chunk in chunks 
-                if chunk.meta_data.get('chunk_type') in ['function', 'class']
+                if chunk.meta_data.get('chunk_type') in ['function', 'class', 'function_declaration']  # 新增声明类型
             ]
+
             current_functions = [f for f in current_functions if f['name']]  # 过滤空值
 
             # 线程安全地更新全局函数映射
