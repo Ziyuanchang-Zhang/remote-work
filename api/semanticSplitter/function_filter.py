@@ -1,6 +1,5 @@
 import os
 import json
-import csv
 import threading
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Any
@@ -19,16 +18,14 @@ class FunctionFilterProcessor(MultiLanguageTextSplitter):
         modified_configs['use_multiprocessing'] = False  # 禁用多进程
         modified_configs['use_threading'] = True         # 启用多线程
         super().__init__(text_splitter, modified_configs, file_path)
-        
-        # 新增存储结构（使用线程锁确保并行安全）
         self._lock = threading.Lock()
         self.header_functions = []  # 头文件中的函数
         self.cross_module_calls = []  # 跨模块调用
         self.all_functions = {}  # 所有文件的函数映射 {file_path: [function_details]}
-        self.temp_file_path = os.path.join(os.getcwd(), "temp_functions.json")
-        # 新增函数数据文件路径
         self.func_data_dir = os.path.join(os.getcwd(), "function_data")
         os.makedirs(self.func_data_dir, exist_ok=True)
+        # 新增跨模块调用结果文件路径
+        self.cross_calls_json_path = os.path.join(self.func_data_dir, "cross_module_calls.json")
 
     def _is_header_file(self, file_path: str) -> bool:
         """判断是否为头文件（支持C/C++头文件格式）"""
@@ -41,47 +38,52 @@ class FunctionFilterProcessor(MultiLanguageTextSplitter):
             file_name = os.path.basename(file_path)  # 先获取文件名（含扩展名）
             return os.path.splitext(file_name)[0]    # 移除扩展名
 
+    def _is_header_function(self, callee_name: str) -> bool:
+        """新增：判断被调用函数是否为头文件中的函数"""
+        with self._lock:
+            return any(hf['function_name'] == callee_name for hf in self.header_functions)
+
     def _is_cross_module_call(self, caller_file: str, callee_name: str) -> Optional[str]:
-        """判断是否为跨模块调用（基于文件名主体是否不同）"""
         if not self.all_functions:
             return None
         
-        # 获取调用者文件的主体名称（不含扩展名）
         caller_base_name = self._get_file_base_name(caller_file)
         
-        # 遍历所有文件，寻找被调用函数
+        # 直接遍历所有头文件，寻找包含目标函数且主体名不同的文件
         for file_path, functions in self.all_functions.items():
-            # 被调用函数所在文件的主体名称
-            callee_base_name = self._get_file_base_name(file_path)
-            
-            # 仅当文件名主体不同，且存在匹配的函数时，才视为跨模块调用
-            if (caller_base_name != callee_base_name and 
-                any(f.get('name') == callee_name for f in functions)):
-                return file_path  # 返回被调用函数所在的文件路径
+            # 只处理头文件
+            if not self._is_header_file(file_path):
+                continue
+            # 检查该头文件中是否包含目标函数
+            if any(f.get('name') == callee_name for f in functions):
+                callee_base_name = self._get_file_base_name(file_path)
+                if caller_base_name != callee_base_name:
+                    return file_path
         
-        return None  # 非跨模块调用
+        return None
 
-    def _generate_temp_file(self):
-        """生成包含头文件函数和跨模块调用的临时文件"""
+    def _write_header_functions_to_json(self):
+        """将头文件函数信息写入JSON文件（提前生成）"""
         with self._lock:
-            temp_data = {
+            json_data = {
                 'header_functions': self.header_functions,
-                'cross_module_calls': self.cross_module_calls,
                 'generated_at': datetime.now().isoformat()
             }
+            json_path = os.path.join(self.func_data_dir, "header_functions.json")
             try:
-                with open(self.temp_file_path, 'w') as f:
-                    json.dump(temp_data, f, indent=2)
-                logger.info(f"临时文件已生成: {self.temp_file_path}")  # 修复：使用模块级logger
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump(json_data, f, indent=2, ensure_ascii=False)
+                logger.info(f"头文件函数JSON文件已生成: {json_path}")
             except Exception as e:
-                logger.error(f"生成临时文件失败: {e}")  # 修复：使用模块级logger
-
+                logger.error(f"生成头文件函数JSON文件失败: {e}")
+        return json_path
+    
     def _write_functions_to_json(self):
         """将所有函数信息写入JSON文件"""
         with self._lock:
             json_data = {
                 'all_functions': self.all_functions,
-                'header_functions': self.header_functions,
+                # 'header_functions': self.header_functions,
                 'generated_at': datetime.now().isoformat()
             }
             json_path = os.path.join(self.func_data_dir, "all_functions.json")
@@ -91,40 +93,21 @@ class FunctionFilterProcessor(MultiLanguageTextSplitter):
                 logger.info(f"函数信息JSON文件已生成: {json_path}")  # 修复：使用模块级logger
             except Exception as e:
                 logger.error(f"生成函数JSON文件失败: {e}")  # 修复：使用模块级logger
-
-    def _write_functions_to_csv(self):
-        """将所有函数信息写入CSV文件"""
+    
+    def _write_cross_module_calls_to_json(self):
+        """将跨模块调用结果写入JSON文件"""
         with self._lock:
-            csv_path = os.path.join(self.func_data_dir, "all_functions.csv")
+            json_data = {
+                'cross_module_calls': self.cross_module_calls,
+                'generated_at': datetime.now().isoformat()
+            }
             try:
-                with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
-                    # 写入表头
-                    writer.writerow([
-                        'file_path', 'function_name', 'type', 'start_line', 
-                        'end_line', 'parent_class', 'is_header_function'
-                    ])
-                    
-                    # 写入所有函数数据
-                    for file_path, functions in self.all_functions.items():
-                        for func in functions:
-                            is_header = any(
-                                hf['function_name'] == func['name'] and hf['file_path'] == file_path
-                                for hf in self.header_functions
-                            )
-                            writer.writerow([
-                                file_path,
-                                func['name'],
-                                func['type'],
-                                func['start_line'],
-                                func['end_line'],
-                                func.get('parent_class', ''),
-                                'Yes' if is_header else 'No'
-                            ])
-                logger.info(f"函数信息CSV文件已生成: {csv_path}")  # 修复：使用模块级logger
+                with open(self.cross_calls_json_path, 'w', encoding='utf-8') as f:
+                    json.dump(json_data, f, indent=2, ensure_ascii=False)
+                logger.info(f"跨模块调用结果JSON文件已生成: {self.cross_calls_json_path}")
             except Exception as e:
-                logger.error(f"生成函数CSV文件失败: {e}")  # 修复：使用模块级logger
-
+                logger.error(f"生成跨模块调用JSON文件失败: {e}")
+    
     def _process_document_internal(self, doc: Document) -> Tuple[List[Document], Dict[str, List[str]]]:
         """重写内部处理逻辑，添加头文件和跨模块调用识别"""
         # 调用父类方法获取基础分割结果
@@ -189,25 +172,54 @@ class FunctionFilterProcessor(MultiLanguageTextSplitter):
         # 调用父类的分割逻辑（已强制为多线程模式）
         result_chunks = super().split_documents(documents)
 
-        # 处理跨模块调用的延迟验证（确保所有函数已收集）
+        # 先生成头文件函数JSON
+        self._write_header_functions_to_json()
+
+        # 处理跨模块调用的验证与去重（放宽标准：同一callee且同一callee_file视为重复）
         with self._lock:
-            # 过滤并验证跨模块调用
+            # 1. 先筛选有效的跨模块调用
             valid_calls = []
             for call in self.cross_module_calls:
                 if call.get('pending'):
-                    # 调用修改后的方法，获取被调用函数的文件路径
                     callee_file = self._is_cross_module_call(call['caller_file'], call['callee'])
                     if callee_file:
                         valid_calls.append({
                             'caller': call['caller'],
                             'callee': call['callee'],
                             'caller_file': call['caller_file'],
-                            'callee_file': callee_file  # 添加被调用函数的文件路径
+                            'callee_file': callee_file
                         })
-            self.cross_module_calls = valid_calls
+            
+            # 2. 去重逻辑：以(callee, callee_file)作为唯一标识
+            call_counts = {}
+            for call in valid_calls:
+                # 唯一键：被调用函数 + 被调用函数所在文件
+                call_key = (call['callee'], call['callee_file'])
+                
+                if call_key in call_counts:
+                    # 重复调用则累加次数
+                    call_counts[call_key]['times'] += 1
+                    # 可选项：记录所有调用者信息（如果需要追溯来源）
+                    call_counts[call_key]['callers'].append({
+                        'caller': call['caller'],
+                        'caller_file': call['caller_file']
+                    })
+                else:
+                    call_counts[call_key] = {
+                        'callee': call['callee'],
+                        'callee_file': call['callee_file'],
+                        'times': 1,
+                        'callers': [{
+                            'caller': call['caller'],
+                            'caller_file': call['caller_file']
+                        }]
+                    }
+            
+            # 3. 转换为列表格式（如需精简可移除callers字段）
+            self.cross_module_calls = list(call_counts.values())
 
-        # 所有文档处理完成后生成文件
-        self._generate_temp_file()
+        # 生成其他文件
         self._write_functions_to_json()
-        self._write_functions_to_csv()
+        # 生成跨模块调用结果JSON
+        self._write_cross_module_calls_to_json()
         return result_chunks
